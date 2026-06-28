@@ -70,6 +70,7 @@ const i18n = {
     profitLabel:'Profit', lossLabel:'Loss',
     dashGreetMorning:'Good Morning 🌅', dashGreetAfternoon:'Good Afternoon ☀️',
     dashGreetEvening:'Good Evening 🌙',
+    loadDemo:'Load Demo Data',
   },
   mr: {
     appName:'माली फार्म मॅनेजर', tagline:'शेत हिशेब आणि व्यवस्थापन', darkMode:'डार्क मोड',
@@ -122,6 +123,7 @@ const i18n = {
     noTasks:'कामे आढळली नाहीत.', noReport:'वरती अहवाल तयार करा.',
     profitLabel:'नफा', lossLabel:'तोटा',
     dashGreetMorning:'सुप्रभात 🌅', dashGreetAfternoon:'शुभ दुपार ☀️', dashGreetEvening:'शुभ संध्याकाळ 🌙',
+    loadDemo:'डेमो डेटा लोड करा',
   }
 };
 
@@ -134,19 +136,40 @@ let currentEditId = null;
 let undoStack = null;
 let chartInstances = {};
 
+/* ---- INIT FLAG KEY: tracks whether the app has ever been opened ---- */
+const INIT_FLAG_KEY = STORAGE_KEY + '_initialized';
+
 /* ===================== INIT ===================== */
 document.addEventListener('DOMContentLoaded', () => {
   loadDB();
   applyTheme(theme);
   applyLang(lang);
+
+  // ── First-ever launch detection ─────────────────────────────────────
+  // We check the raw localStorage entry for STORAGE_KEY (not just db in
+  // memory) so that a deliberate clearSection('all') — which explicitly
+  // sets INIT_FLAG_KEY='1' — prevents demo data from ever re-appearing.
+  const neverOpened = !localStorage.getItem(INIT_FLAG_KEY);
+  if (neverOpened) {
+    // Mark as initialised BEFORE doing anything else.
+    // Any future refresh or clear will see this flag.
+    localStorage.setItem(INIT_FLAG_KEY, '1');
+    // NOTE: We do NOT call loadDemoData() here automatically.
+    // The user can click "Load Demo Data" from Settings if they want samples.
+  }
+  // ────────────────────────────────────────────────────────────────────
+
   initSettings();
   populateYearDropdowns();
   populateFilterDropdowns();
   renderDashboard();
   initDateInputs();
   scheduleNotificationCheck();
-  setInterval(scheduleNotificationCheck, 60000); // check every minute
-  document.getElementById('dashDate').textContent = new Date().toLocaleDateString(lang === 'mr' ? 'mr-IN' : 'en-IN', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+  setInterval(scheduleNotificationCheck, 60000);
+  document.getElementById('dashDate').textContent = new Date().toLocaleDateString(
+    lang === 'mr' ? 'mr-IN' : 'en-IN',
+    { weekday:'long', year:'numeric', month:'long', day:'numeric' }
+  );
 });
 
 /* ===================== DB (LocalStorage) ===================== */
@@ -1581,16 +1604,26 @@ function clearSection(section) {
               section === 'expenses' ? 'Delete all expense records?' : 'Delete all revenue records?';
   confirmAction(msg, () => {
     if (section === 'all') {
-      db = { farms:[], crops:[], expenses:[], revenue:[], tasks:[], settings:db.settings };
+      // Wipe every key from localStorage so nothing auto-restores on reload
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_KEY + '_initialized');
+      db = { farms:[], crops:[], expenses:[], revenue:[], tasks:[], settings:{} };
+      // Re-save the now-empty DB so the key exists but is genuinely blank.
+      // Mark as "seen" so demo data is never auto-loaded again.
+      localStorage.setItem(STORAGE_KEY + '_initialized', '1');
+      saveDB();
     } else if (section === 'expenses') {
       db.expenses = [];
+      saveDB();
     } else {
       db.revenue = [];
+      saveDB();
     }
-    saveDB();
     populateFilterDropdowns();
+    populateYearDropdowns();
+    initSettings();
     renderDashboard();
-    showToast('Cleared successfully');
+    showToast(lang === 'mr' ? 'यशस्वीरित्या साफ केले ✅' : 'Cleared successfully ✅');
   }, false);
 }
 
@@ -1627,56 +1660,57 @@ document.addEventListener('change', e => {
   }
 });
 
-/* ===================== SEED DEMO DATA (if empty) ===================== */
-function seedDemoData() {
-  if (db.farms.length > 0) return; // already has data
-  const f1id = uid(), f2id = uid(), f3id = uid();
-  const c1id = uid(), c2id = uid(), c3id = uid(), c4id = uid();
-  db.farms = [
-    { id:f1id, name:'Home Farm', village:'Pune', area:'5 Acres', owner:'Balasaheb Mali', notes:'Main family farm', createdAt:new Date().toISOString() },
-    { id:f2id, name:'East Farm', village:'Nashik', area:'3 Acres', owner:'Balasaheb Mali', notes:'Seasonal crops', createdAt:new Date().toISOString() },
-    { id:f3id, name:'Sugarcane Farm', village:'Kolhapur', area:'8 Acres', owner:'Balasaheb Mali', notes:'Dedicated to sugarcane', createdAt:new Date().toISOString() }
-  ];
-  db.crops = [
-    { id:c1id, farmId:f1id, name:'Tomato / टोमॅटो', plantDate:'2025-01-15', harvestDate:'2025-04-15', area:'2 Acres', status:'growing', notes:'', createdAt:new Date().toISOString() },
-    { id:c2id, farmId:f1id, name:'Onion / कांदा',   plantDate:'2025-02-01', harvestDate:'2025-05-01', area:'1.5 Acres', status:'growing', notes:'', createdAt:new Date().toISOString() },
-    { id:c3id, farmId:f2id, name:'Wheat / गहू',     plantDate:'2024-11-01', harvestDate:'2025-03-15', area:'3 Acres', status:'harvested', notes:'', createdAt:new Date().toISOString() },
-    { id:c4id, farmId:f3id, name:'Sugarcane / ऊस',  plantDate:'2024-06-01', harvestDate:'2025-12-01', area:'8 Acres', status:'growing', notes:'', createdAt:new Date().toISOString() }
-  ];
-  const cy = new Date().getFullYear();
-  const em = m => `${cy}-${String(m).padStart(2,'0')}-${String(Math.floor(Math.random()*20)+1).padStart(2,'0')}`;
-  db.expenses = [
-    { id:uid(), farmId:f1id, cropId:c1id, date:em(1), category:'Seeds / बियाणे', description:'Tomato seeds purchase', amount:3200, payment:'Cash / रोख', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c1id, date:em(1), category:'Fertilizers / खते', description:'DAP fertilizer', amount:5500, payment:'UPI', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c2id, date:em(2), category:'Workers / मजुरी', description:'Labour for planting', amount:8000, payment:'Cash / रोख', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f3id, cropId:c4id, date:em(2), category:'Irrigation / सिंचन', description:'Drip irrigation maintenance', amount:4200, payment:'Cheque / धनादेश', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f2id, cropId:c3id, date:em(3), category:'Tractor / ट्रॅक्टर', description:'Tractor rental for harvesting', amount:6000, payment:'Cash / रोख', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c1id, date:em(3), category:'Pesticides / कीटकनाशके', description:'Fungicide spray', amount:2800, payment:'UPI', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f3id, cropId:c4id, date:em(4), category:'Fertilizers / खते', description:'Urea top dressing', amount:3600, payment:'Cash / रोख', notes:'', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c2id, date:em(5), category:'Transport / वाहतूक', description:'Onion transport to market', amount:1800, payment:'Cash / रोख', notes:'', createdAt:new Date().toISOString() }
-  ];
-  db.revenue = [
-    { id:uid(), farmId:f2id, cropId:c3id, date:em(3), qty:50, unit:'quintal', rate:2100, amount:105000, buyer:'Datta Traders', payment:'Cheque / धनादेश', notes:'Wheat harvest sale', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c1id, date:em(4), qty:800, unit:'kg', rate:28, amount:22400, buyer:'Rahul Patil', payment:'UPI', notes:'First harvest tomatoes', createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:c2id, date:em(5), qty:200, unit:'kg', rate:35, amount:7000, buyer:'APMC Market', payment:'Cash / रोख', notes:'Onion sale', createdAt:new Date().toISOString() }
-  ];
-  db.tasks = [
-    { id:uid(), farmId:f1id, cropId:c1id, description:'Spray pesticide on tomato crop', date:today(), time:'07:00', priority:'high', status:'pending', reminder:'onday', notes:'Use neem oil', notified:false, createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f3id, cropId:c4id, description:'Irrigate sugarcane field', date:new Date(Date.now()+86400000).toISOString().split('T')[0], time:'06:00', priority:'medium', status:'pending', reminder:'1day', notes:'', notified:false, createdAt:new Date().toISOString() },
-    { id:uid(), farmId:f1id, cropId:'', description:'Pay farm workers', date:new Date(Date.now()+2*86400000).toISOString().split('T')[0], time:'10:00', priority:'high', status:'pending', reminder:'2day', notes:'₹8000 total', notified:false, createdAt:new Date().toISOString() }
-  ];
-  db.settings = { owner:'Balasaheb Mali', phone:'9876543210', address:'Village Karad, Taluka Satara, Maharashtra' };
-  saveDB();
+/* ===================== DEMO DATA (manual load only) =====================
+ * Called ONLY when the user explicitly clicks "Load Demo Data".
+ * NEVER called automatically on init or refresh.
+ * ===================================================================== */
+function loadDemoData() {
+  confirmAction(
+    lang === 'mr'
+      ? 'डेमो डेटा लोड करायचा? हे सध्याच्या डेटामध्ये जोडेल.'
+      : 'Load demo data? This will add sample records to your current data.',
+    () => {
+      const f1id = uid(), f2id = uid(), f3id = uid();
+      const c1id = uid(), c2id = uid(), c3id = uid(), c4id = uid();
+      db.farms.push(
+        { id:f1id, name:'Home Farm',       village:'Pune',      area:'5 Acres', owner:'Balasaheb Mali', notes:'Main family farm',       createdAt:new Date().toISOString() },
+        { id:f2id, name:'East Farm',        village:'Nashik',    area:'3 Acres', owner:'Balasaheb Mali', notes:'Seasonal crops',           createdAt:new Date().toISOString() },
+        { id:f3id, name:'Sugarcane Farm',   village:'Kolhapur',  area:'8 Acres', owner:'Balasaheb Mali', notes:'Dedicated to sugarcane',   createdAt:new Date().toISOString() }
+      );
+      db.crops.push(
+        { id:c1id, farmId:f1id, name:'Tomato / टोमॅटो', plantDate:'2025-01-15', harvestDate:'2025-04-15', area:'2 Acres',   status:'growing',   notes:'', createdAt:new Date().toISOString() },
+        { id:c2id, farmId:f1id, name:'Onion / कांदा',   plantDate:'2025-02-01', harvestDate:'2025-05-01', area:'1.5 Acres', status:'growing',   notes:'', createdAt:new Date().toISOString() },
+        { id:c3id, farmId:f2id, name:'Wheat / गहू',     plantDate:'2024-11-01', harvestDate:'2025-03-15', area:'3 Acres',   status:'harvested', notes:'', createdAt:new Date().toISOString() },
+        { id:c4id, farmId:f3id, name:'Sugarcane / ऊस',  plantDate:'2024-06-01', harvestDate:'2025-12-01', area:'8 Acres',   status:'growing',   notes:'', createdAt:new Date().toISOString() }
+      );
+      const cy = new Date().getFullYear();
+      const em = m => `${cy}-${String(m).padStart(2,'0')}-${String(Math.floor(Math.random()*20)+1).padStart(2,'0')}`;
+      db.expenses.push(
+        { id:uid(), farmId:f1id, cropId:c1id, date:em(1), category:'Seeds / बियाणे',          description:'Tomato seeds purchase',        amount:3200,  payment:'Cash / रोख',       notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c1id, date:em(1), category:'Fertilizers / खते',       description:'DAP fertilizer',               amount:5500,  payment:'UPI',               notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c2id, date:em(2), category:'Workers / मजुरी',         description:'Labour for planting',          amount:8000,  payment:'Cash / रोख',       notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f3id, cropId:c4id, date:em(2), category:'Irrigation / सिंचन',      description:'Drip irrigation maintenance',  amount:4200,  payment:'Cheque / धनादेश', notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f2id, cropId:c3id, date:em(3), category:'Tractor / ट्रॅक्टर',     description:'Tractor rental for harvesting',amount:6000,  payment:'Cash / रोख',       notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c1id, date:em(3), category:'Pesticides / कीटकनाशके', description:'Fungicide spray',              amount:2800,  payment:'UPI',               notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f3id, cropId:c4id, date:em(4), category:'Fertilizers / खते',       description:'Urea top dressing',            amount:3600,  payment:'Cash / रोख',       notes:'', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c2id, date:em(5), category:'Transport / वाहतूक',      description:'Onion transport to market',    amount:1800,  payment:'Cash / रोख',       notes:'', createdAt:new Date().toISOString() }
+      );
+      db.revenue.push(
+        { id:uid(), farmId:f2id, cropId:c3id, date:em(3), qty:50,  unit:'quintal', rate:2100, amount:105000, buyer:'Datta Traders', payment:'Cheque / धनादेश', notes:'Wheat harvest sale',      createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c1id, date:em(4), qty:800, unit:'kg',      rate:28,   amount:22400,  buyer:'Rahul Patil',   payment:'UPI',               notes:'First harvest tomatoes', createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:c2id, date:em(5), qty:200, unit:'kg',      rate:35,   amount:7000,   buyer:'APMC Market',   payment:'Cash / रोख',       notes:'Onion sale',             createdAt:new Date().toISOString() }
+      );
+      db.tasks.push(
+        { id:uid(), farmId:f1id, cropId:c1id, description:'Spray pesticide on tomato crop', date:today(),                                                         time:'07:00', priority:'high',   status:'pending', reminder:'onday', notes:'Use neem oil', notified:false, createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f3id, cropId:c4id, description:'Irrigate sugarcane field',        date:new Date(Date.now()+86400000).toISOString().split('T')[0],       time:'06:00', priority:'medium', status:'pending', reminder:'1day',  notes:'',           notified:false, createdAt:new Date().toISOString() },
+        { id:uid(), farmId:f1id, cropId:'',   description:'Pay farm workers',                date:new Date(Date.now()+2*86400000).toISOString().split('T')[0],     time:'10:00', priority:'high',   status:'pending', reminder:'2day',  notes:'₹8000 total',notified:false, createdAt:new Date().toISOString() }
+      );
+      saveDB();
+      populateFilterDropdowns();
+      populateYearDropdowns();
+      renderDashboard();
+      showToast(lang === 'mr' ? 'डेमो डेटा लोड झाला ✅' : 'Demo data loaded ✅');
+    },
+    false
+  );
 }
-
-// Load demo data on first run
-window.addEventListener('load', () => {
-  if (db.farms.length === 0) {
-    seedDemoData();
-    loadDB();
-    populateFilterDropdowns();
-    populateYearDropdowns();
-    renderDashboard();
-    initSettings();
-  }
-});
